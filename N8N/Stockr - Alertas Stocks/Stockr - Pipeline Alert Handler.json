@@ -1,0 +1,374 @@
+{
+  "name": "Stockr - Pipeline Alert Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Stockr - Alert Handler\n\nWebhook URL generada al activar.\nAgregar en FastAPI .env:\nN8N_WEBHOOK_URL=http://localhost:5678/webhook/stockr-results",
+        "height": 200,
+        "width": 300,
+        "color": 3
+      },
+      "id": "sticky-setup",
+      "name": "Setup Instructions",
+      "position": [
+        -256,
+        80
+      ],
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stockr-results",
+        "options": {}
+      },
+      "id": "n-webhook",
+      "name": "Webhook - Stockr Results",
+      "position": [
+        -224,
+        320
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "6129dc3b-e892-43e2-9fe9-e07b2276846c",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-status",
+              "leftValue": "={{ $json.status }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "ok"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-if-status",
+      "name": "Estado OK?",
+      "position": [
+        224,
+        304
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "1632575644",
+        "text": "={{ 'ERROR STOCKR\\nCliente: ' + $json.client_id + '\\nRun: ' + $json.run_id + '\\n' + ($json.error || 'Error desconocido') }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "n-tg-error",
+      "name": "Telegram - Error Pipeline",
+      "position": [
+        448,
+        512
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "77a339d0-b842-4c99-a459-22d0612c9bf4",
+      "credentials": {
+        "telegramApi": {
+          "id": "8eb5uPZR5lpVGSez",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "1632575644",
+        "text": "={{ 'STOCKR - Corrida completada\\nCliente: ' + $json.client_id + '\\nOCs urgentes: ' + $json.kpis.ocs_urgentes + '\\nLost Sales: $' + Number($json.kpis.lost_sales_usd || 0).toFixed(0) + '\\nCapital exceso: $' + Number($json.kpis.excess_capital_usd || 0).toFixed(0) + '\\nMargen bajo: ' + $json.kpis.skus_margen_bajo + ' SKUs\\nNivel servicio: ' + $json.kpis.service_level + '\\nDuracion: ' + $json.duration_sec + 's' }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "n-tg-summary",
+      "name": "Telegram - Resumen Ejecucion",
+      "position": [
+        448,
+        192
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "27b691ec-7d08-4a36-ac94-473588f03d67",
+      "credentials": {
+        "telegramApi": {
+          "id": "8eb5uPZR5lpVGSez",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-etl",
+              "leftValue": "={{ ($json.etl_report.warnings || []).length }}",
+              "operator": {
+                "operation": "gt",
+                "type": "number"
+              },
+              "rightValue": 0
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "id": "n-if-etl",
+      "name": "Hay ETL Warnings?",
+      "position": [
+        672,
+        112
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "1632575644",
+        "text": "={{ 'STOCKR - Advertencias de calidad\\nCliente: ' + $json.client_id + '\\n' + ($json.etl_report.warnings || []).map(function(w){ return '- [' + w.sheet + '] ' + w.msg; }).join('\\n') }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "n-tg-etl",
+      "name": "Telegram - ETL Warning",
+      "position": [
+        880,
+        112
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "a54f3c81-8f52-49bb-a86f-d9cca6069e39",
+      "credentials": {
+        "telegramApi": {
+          "id": "8eb5uPZR5lpVGSez",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-urgent",
+              "leftValue": "={{ $json.kpis.ocs_urgentes }}",
+              "operator": {
+                "operation": "gt",
+                "type": "number"
+              },
+              "rightValue": 0
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "id": "n-if-urgent",
+      "name": "Hay OCs Urgentes?",
+      "position": [
+        672,
+        304
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "urgent_orders",
+        "options": {}
+      },
+      "id": "n-split",
+      "name": "Separar OCs",
+      "position": [
+        880,
+        304
+      ],
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "1632575644",
+        "text": "={{ ($json.urgencia === 'URGENTE' ? 'URGENTE' : 'CRITICA') + ' - STOCKR OC\\nCliente: ' + $('Normalizar Body').first().json.client_id + '\\nSKU: ' + $json.sku_id + '\\n' + ($json.description ? String($json.description).substring(0,40) + '\\n' : '') + 'Emitir antes: ' + $json.emitir_oc_antes + '\\nCantidad: ' + $json.qty_sugerida + ' u.\\nProveedor: ' + $json.proveedor + '\\nHolding/anio: $' + Number($json.holding_cost_usd_yr || 0).toFixed(0) }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "n-tg-oc",
+      "name": "Telegram - OC Urgente",
+      "position": [
+        1104,
+        304
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "bda9c88b-19f1-4ce0-97fa-2b5d577512fd",
+      "credentials": {
+        "telegramApi": {
+          "id": "8eb5uPZR5lpVGSez",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "=={{ $json.body !== undefined ? $json.body : $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -16,
+        320
+      ],
+      "id": "854bb602-de74-4c97-8556-0a6bd4bd2803",
+      "name": "Normalizar Body"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Stockr Results": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estado OK?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Telegram - Resumen Ejecucion",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "Hay ETL Warnings?",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "Hay OCs Urgentes?",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Telegram - Error Pipeline",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Hay ETL Warnings?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Telegram - ETL Warning",
+            "type": "main"
+          }
+        ],
+        []
+      ]
+    },
+    "Hay OCs Urgentes?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Separar OCs",
+            "type": "main"
+          }
+        ],
+        []
+      ]
+    },
+    "Separar OCs": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Telegram - OC Urgente",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Normalizar Body": {
+      "main": [
+        [
+          {
+            "node": "Estado OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "7c7a3bb3-7f68-4b9f-8195-02f45d254db9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "de93561aa00d4abf59a2e2da1dbabc32364393e73a83d428e936280faa1b14e2"
+  },
+  "id": "u9WozwFchq8hcjhx",
+  "tags": []
+}

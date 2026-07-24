@@ -1,0 +1,368 @@
+{
+  "name": "Nexus IA - Cobranzas Automatizadas",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-trigger",
+      "name": "Manual Trigger",
+      "position": [
+        224,
+        112
+      ],
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "jsCode": "// FACTURAS DE EJEMPLO (DEMO) - fechas en hora local\nfunction masDias(d) {\n  const x = new Date();\n  x.setDate(x.getDate() + d);\n  const y = x.getFullYear();\n  const m = String(x.getMonth() + 1).padStart(2, '0');\n  const dd = String(x.getDate()).padStart(2, '0');\n  return `${y}-${m}-${dd}`;\n}\n\nreturn [\n  { json: { cliente: 'Juan Pérez', telefono: '5491100000000', nro: 'A-0231', monto: 84500, vencimiento: masDias(2), link: 'https://pago.tu-link.com/0231' } },\n  { json: { cliente: 'Distribuidora Sur', telefono: '5491100000001', nro: 'A-0228', monto: 152300, vencimiento: masDias(0), link: 'https://pago.tu-link.com/0228' } },\n  { json: { cliente: 'Kiosco El Sol', telefono: '5491100000002', nro: 'A-0219', monto: 43900, vencimiento: masDias(-3), link: 'https://pago.tu-link.com/0219' } },\n  { json: { cliente: 'No corresponde', telefono: '5491100000003', nro: 'A-0240', monto: 12000, vencimiento: masDias(10), link: 'https://pago.tu-link.com/0240' } }\n];"
+      },
+      "id": "node-facturas",
+      "name": "Cargar facturas (demo)",
+      "position": [
+        448,
+        112
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Schedule Trigger (diario)",
+      "position": [
+        224,
+        368
+      ],
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "16Yj3_513L1-4ITqo9XkiCQsdE4-WyZH9R80xTC2qHjk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1526059598,
+          "mode": "list",
+          "cachedResultName": "Facturas ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16Yj3_513L1-4ITqo9XkiCQsdE4-WyZH9R80xTC2qHjk/edit#gid=1526059598"
+        },
+        "options": {}
+      },
+      "id": "node-sheets-read",
+      "name": "Leer facturas (Google Sheets)",
+      "position": [
+        448,
+        368
+      ],
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "credentials": {
+        "googleApi": {
+          "id": "1HB5eiZ1OF5fqxD3",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// CALCULAR ETAPA Y ARMAR MENSAJE (rangos, robusto a desfasajes de fecha)\nfunction aFechaLocal(s) {\n  const [y, m, d] = String(s).split('-').map(Number);\n  return new Date(y, m - 1, d);\n}\nconst ahora = new Date();\nconst hoy = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());\n\nconst out = [];\nfor (const item of $input.all()) {\n  const f = item.json;\n  const venc = aFechaLocal(f.vencimiento);\n  const dias = Math.round((venc - hoy) / 86400000);\n  const monto = Number(f.monto).toLocaleString('es-AR');\n  let etapa = null, mensaje = null;\n\n  if (dias < 0) {\n    etapa = 'mora';\n    mensaje = `Hola ${f.cliente}, tu factura ${f.nro} por $${monto} venció hace ${Math.abs(dias)} día(s). ¿Pudiste gestionarla? Acá tenés el link: ${f.link}. Cualquier cosa, avisanos.`;\n  } else if (dias === 0) {\n    etapa = 'vence';\n    mensaje = `Hola ${f.cliente}, hoy vence tu factura ${f.nro} por $${monto}. Link de pago: ${f.link}. ¡Gracias!`;\n  } else if (dias <= 3) {\n    etapa = 'pre';\n    mensaje = `Hola ${f.cliente} 👋 Te recordamos que tu factura ${f.nro} por $${monto} vence en ${dias} día(s). Podés abonarla acá: ${f.link}`;\n  }\n\n  if (etapa) out.push({ json: { ...f, dias, etapa, mensaje } });\n}\nreturn out;"
+      },
+      "id": "node-etapa",
+      "name": "Calcular etapa y armar mensaje",
+      "position": [
+        720,
+        224
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "chatId": "1632575644",
+        "text": "={{ $json.mensaje }}",
+        "additionalFields": {}
+      },
+      "id": "node-telegram",
+      "name": "Enviar Telegram (test)",
+      "position": [
+        960,
+        128
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "0ad3d2c2-439c-46e0-a690-1b8bf28c4a2c",
+      "credentials": {
+        "telegramApi": {
+          "id": "8eb5uPZR5lpVGSez",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v21.0/PEGA_TU_PHONE_NUMBER_ID/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PEGA_TU_TOKEN_AQUI"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { messaging_product: 'whatsapp', to: $json.telefono, type: 'text', text: { body: $json.mensaje } } }}",
+        "options": {}
+      },
+      "id": "node-whatsapp",
+      "maxTries": 3,
+      "name": "Enviar WhatsApp (Meta Cloud API)",
+      "position": [
+        960,
+        320
+      ],
+      "retryOnFail": true,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "waitBetweenTries": 2000,
+      "disabled": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "16Yj3_513L1-4ITqo9XkiCQsdE4-WyZH9R80xTC2qHjk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1526059598,
+          "mode": "list",
+          "cachedResultName": "Facturas ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16Yj3_513L1-4ITqo9XkiCQsdE4-WyZH9R80xTC2qHjk/edit#gid=1526059598"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "cliente",
+              "displayName": "cliente",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "telefono",
+              "displayName": "telefono",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nro",
+              "displayName": "nro",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "monto",
+              "displayName": "monto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vencimiento",
+              "displayName": "vencimiento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "estado",
+              "displayName": "estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "node-sheets-update",
+      "name": "Marcar avisado (Google Sheets)",
+      "position": [
+        1200,
+        224
+      ],
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "credentials": {
+        "googleApi": {
+          "id": "1HB5eiZ1OF5fqxD3",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## TEST RAPIDO (Telegram)\n\n1) En 'Enviar Telegram (test)' elegi tu credencial de Telegram.\n2) Pega tu CHAT_ID donde dice PEGA_TU_CHAT_ID.\n3) 'Test workflow' -> te llegan los 3 mensajes por Telegram.\n\nWhatsApp quedo DESACTIVADO, listo para la demo al cliente.",
+        "height": 300,
+        "width": 420,
+        "color": 5
+      },
+      "id": "note-demo",
+      "name": "Sticky Note Test",
+      "position": [
+        192,
+        -240
+      ],
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Calcular etapa y armar mensaje": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Enviar Telegram (test)",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "Enviar WhatsApp (Meta Cloud API)",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Cargar facturas (demo)": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Calcular etapa y armar mensaje",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Enviar Telegram (test)": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Marcar avisado (Google Sheets)",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Leer facturas (Google Sheets)": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Calcular etapa y armar mensaje",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Cargar facturas (demo)",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (diario)": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Leer facturas (Google Sheets)",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timezone": "America/Argentina/Buenos_Aires"
+  },
+  "versionId": "5a876de5-86b9-4018-a212-cadf6c445ad9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "de93561aa00d4abf59a2e2da1dbabc32364393e73a83d428e936280faa1b14e2"
+  },
+  "id": "dkQgpt2JFE2bGWJk",
+  "tags": []
+}

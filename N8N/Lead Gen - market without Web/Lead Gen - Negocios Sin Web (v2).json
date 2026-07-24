@@ -1,0 +1,744 @@
+{
+  "name": "Lead Gen - Negocios Sin Web (v2)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "19b53d5d-19ec-4536-90eb-cae2efdf7574",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1152,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "googleApiKey",
+              "value": "AIzaSyCO4iUdB3SFMshXYYLFeUEJ8g8H-qNJptA",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "minRating",
+              "value": 4,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "minReviews",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "queries",
+              "value": "=[\"restaurante en Palermo, Buenos Aires\",\"ferreteria en Belgrano, Buenos Aires\",\"farmacia en Villa Urquiza, Buenos Aires\",\"estudio contable en San Isidro, Buenos Aires\",\"taller mecanico en Olivos, Buenos Aires\",\"peluqueria en Caballito, Buenos Aires\",\"veterinaria en Almagro, Buenos Aires\",\"inmobiliaria en Vicente Lopez, Buenos Aires\"]",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "94a765c8-1060-4847-8b4c-3ddd022105bc",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "queries",
+        "options": {}
+      },
+      "id": "529ecdd8-0f2e-47b5-8299-b1a43e6a42f4",
+      "name": "Split Queries",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://places.googleapis.com/v1/places:searchText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Goog-Api-Key",
+              "value": "={{ $('Config').first().json.googleApiKey }}"
+            },
+            {
+              "name": "X-Goog-FieldMask",
+              "value": "places.displayName,places.rating,places.userRatingCount,places.websiteUri,places.formattedAddress,places.nationalPhoneNumber,places.googleMapsUri"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "textQuery",
+              "value": "={{ $json.queries }}"
+            },
+            {
+              "name": "minRating",
+              "value": "={{ $('Config').first().json.minRating }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "off"
+            }
+          }
+        }
+      },
+      "id": "a53c0e2b-901d-4002-aee2-f7e1e692aa46",
+      "name": "Places API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "places",
+        "options": {}
+      },
+      "id": "6cc464a9-7cab-4275-8ac1-0b9cf4f509ad",
+      "name": "Split Places",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        912,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// FILTROS DE CALIDAD + DEDUPLICACION\n// ============================================================\nconst minReviews = $('Config').first().json.minReviews;\n\nconst socialDomains = [\n  'facebook.com', 'fb.com',\n  'instagram.com',\n  'twitter.com', 'x.com',\n  'linktr.ee',\n  'wa.me', 'whatsapp.com',\n  'youtube.com',\n  'tiktok.com'\n];\n\nconst seen = new Set();\nconst results = [];\n\nfor (const item of items) {\n  const p = item.json;\n  const query = p.query || '';\n  const categoria = query.split(' en ')[0].trim() || 'sin categoría';\n\n  // -- Filtro 1: Minimo de reseñas --\n  const reviewCount = p.userRatingCount || 0;\n  if (reviewCount < minReviews) continue;\n\n  // -- Filtro 2: Sin web real --\n  const website = (p.websiteUri || '').trim();\n  const hasRealWebsite = website !== '' && !socialDomains.some(d => website.toLowerCase().includes(d));\n  if (hasRealWebsite) continue;\n\n  // -- Deduplicacion por googleMapsUri --\n  const mapsUrl = p.googleMapsUri || '';\n  if (mapsUrl && seen.has(mapsUrl)) continue;\n  if (mapsUrl) seen.add(mapsUrl);\n\n  results.push({\n    json: {\n      categoria:    categoria,\n      nombre:       p.displayName?.text || '',\n      rating:       p.rating || 0,\n      reseñas:      reviewCount,\n      telefono:     p.nationalPhoneNumber || '',\n      direccion:    p.formattedAddress || '',\n      web_actual:   website || '(sin web)',\n      google_maps:  mapsUrl,\n      fecha_scrape: new Date().toLocaleDateString('es-AR')\n    }\n  });\n}\n\n// -- Ordenar por score de calidad (rating x log de reseñas) --\nresults.sort((a, b) => {\n  const scoreA = a.json.rating * Math.log(a.json.reseñas + 1);\n  const scoreB = b.json.rating * Math.log(b.json.reseñas + 1);\n  return scoreB - scoreA;\n});\n\n// -- Top 20 por categoria --\nconst topPorCategoria = {};\nfor (const r of results) {\n  const cat = r.json.categoria;\n  if (!topPorCategoria[cat]) topPorCategoria[cat] = [];\n  if (topPorCategoria[cat].length < 20) topPorCategoria[cat].push(r);\n}\n\nreturn Object.values(topPorCategoria).flat();"
+      },
+      "id": "aa2018a2-8355-4e8f-b6f4-5ee021707e66",
+      "name": "Filtrar y Formatear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1X7Iu2y6TCvcTDYG_VBoE_l0Lz4Ht_IXRE1_J2vcZc9U",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "nombre": "={{ $json.nombre }}",
+            "rating": "={{ $json.rating }}",
+            "reseñas": "={{ $json.reseñas }}",
+            "telefono": "={{ $json.telefono }}",
+            "direccion": "={{ $json.direccion }}",
+            "web_actual": "={{ $json.web_actual }}",
+            "google_maps": "={{ $json.google_maps }}",
+            "fecha_scrape": "={{ $json.fecha_scrape }}",
+            "categoria": "={{ $json.categoria }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "categoria",
+              "displayName": "categoria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombre",
+              "displayName": "nombre",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reseñas",
+              "displayName": "reseñas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "telefono",
+              "displayName": "telefono",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "direccion",
+              "displayName": "direccion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "web_actual",
+              "displayName": "web_actual",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "google_maps",
+              "displayName": "google_maps",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_scrape",
+              "displayName": "fecha_scrape",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6c1e29cd-af35-40f6-856a-8deaf4103b31",
+      "name": "Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1536,
+        0
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "1HB5eiZ1OF5fqxD3",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "62ae8681-f355-451e-a108-018cba48308a",
+              "name": "query",
+              "value": "={{ $('Split Queries').item.json.queries }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        0
+      ],
+      "id": "9316737b-d0ed-4a45-92df-eb3ca61dab32",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "googleApiKey",
+              "value": "AIzaSyCO4iUdB3SFMshXYYLFeUEJ8g8H-qNJptA",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "minRating",
+              "value": 4,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "minReviews",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "queries",
+              "value": "=[\"clinica medica en San Salvador de Jujuy, Jujuy\",\"clinica medica en Santiago del Estero, Santiago del Estero\",\"clinica medica en Resistencia, Chaco\",\"clinica medica en Neuquen, Neuquen\",\"clinica medica en Bariloche, Rio Negro\",\"clinica medica en Comodoro Rivadavia, Chubut\",\"clinica medica en Rio Cuarto, Cordoba\",\"clinica medica en Posadas, Misiones\",\"clinica medica en Rio Gallegos, Santa Cruz\",\"clinica medica en Formosa, Formosa\",\"odontologia en San Salvador de Jujuy, Jujuy\",\"odontologia en Santiago del Estero, Santiago del Estero\",\"odontologia en Resistencia, Chaco\",\"odontologia en Neuquen, Neuquen\",\"odontologia en Bariloche, Rio Negro\",\"odontologia en Comodoro Rivadavia, Chubut\",\"odontologia en Rio Cuarto, Cordoba\",\"odontologia en Posadas, Misiones\",\"odontologia en Rio Gallegos, Santa Cruz\",\"odontologia en Formosa, Formosa\",\"estudio contable en San Salvador de Jujuy, Jujuy\",\"estudio contable en Santiago del Estero, Santiago del Estero\",\"estudio contable en Resistencia, Chaco\",\"estudio contable en Neuquen, Neuquen\",\"estudio contable en Bariloche, Rio Negro\",\"estudio contable en Rio Cuarto, Cordoba\",\"estudio contable en Posadas, Misiones\",\"estudio contable en Comodoro Rivadavia, Chubut\",\"estudio contable en Formosa, Formosa\",\"estudio contable en Rio Gallegos, Santa Cruz\",\"estudio juridico en San Salvador de Jujuy, Jujuy\",\"estudio juridico en Santiago del Estero, Santiago del Estero\",\"estudio juridico en Resistencia, Chaco\",\"estudio juridico en Neuquen, Neuquen\",\"estudio juridico en Bariloche, Rio Negro\",\"estudio juridico en Rio Cuarto, Cordoba\",\"estudio juridico en Posadas, Misiones\",\"estudio juridico en Comodoro Rivadavia, Chubut\",\"estudio juridico en Formosa, Formosa\",\"estudio juridico en Rio Gallegos, Santa Cruz\",\"gimnasio en San Salvador de Jujuy, Jujuy\",\"gimnasio en Resistencia, Chaco\",\"gimnasio en Neuquen, Neuquen\",\"gimnasio en Bariloche, Rio Negro\",\"gimnasio en Rio Cuarto, Cordoba\",\"gimnasio en Posadas, Misiones\",\"gimnasio en Comodoro Rivadavia, Chubut\",\"gimnasio en Santiago del Estero, Santiago del Estero\",\"gimnasio en Formosa, Formosa\",\"gimnasio en Rio Gallegos, Santa Cruz\",\"veterinaria en San Salvador de Jujuy, Jujuy\",\"veterinaria en Resistencia, Chaco\",\"veterinaria en Neuquen, Neuquen\",\"veterinaria en Bariloche, Rio Negro\",\"veterinaria en Rio Cuarto, Cordoba\",\"veterinaria en Posadas, Misiones\",\"veterinaria en Comodoro Rivadavia, Chubut\",\"veterinaria en Santiago del Estero, Santiago del Estero\",\"veterinaria en Formosa, Formosa\",\"veterinaria en Rio Gallegos, Santa Cruz\",\"taller mecanico en San Salvador de Jujuy, Jujuy\",\"taller mecanico en Resistencia, Chaco\",\"taller mecanico en Neuquen, Neuquen\",\"taller mecanico en Bariloche, Rio Negro\",\"taller mecanico en Rio Cuarto, Cordoba\",\"taller mecanico en Posadas, Misiones\",\"taller mecanico en Comodoro Rivadavia, Chubut\",\"taller mecanico en Santiago del Estero, Santiago del Estero\",\"taller mecanico en Formosa, Formosa\",\"taller mecanico en Rio Gallegos, Santa Cruz\",\"psicologo en San Salvador de Jujuy, Jujuy\",\"psicologo en Resistencia, Chaco\",\"psicologo en Neuquen, Neuquen\",\"psicologo en Bariloche, Rio Negro\",\"psicologo en Rio Cuarto, Cordoba\",\"psicologo en Posadas, Misiones\",\"psicologo en Comodoro Rivadavia, Chubut\",\"psicologo en Santiago del Estero, Santiago del Estero\",\"psicologo en Formosa, Formosa\",\"psicologo en Rio Gallegos, Santa Cruz\",\"kinesiologo en San Salvador de Jujuy, Jujuy\",\"kinesiologo en Resistencia, Chaco\",\"kinesiologo en Neuquen, Neuquen\",\"kinesiologo en Bariloche, Rio Negro\",\"kinesiologo en Rio Cuarto, Cordoba\",\"kinesiologo en Posadas, Misiones\",\"kinesiologo en Comodoro Rivadavia, Chubut\",\"kinesiologo en Santiago del Estero, Santiago del Estero\",\"kinesiologo en Formosa, Formosa\",\"kinesiologo en Rio Gallegos, Santa Cruz\",\"centro de estetica en San Salvador de Jujuy, Jujuy\",\"centro de estetica en Resistencia, Chaco\",\"centro de estetica en Neuquen, Neuquen\",\"centro de estetica en Bariloche, Rio Negro\",\"centro de estetica en Rio Cuarto, Cordoba\",\"centro de estetica en Posadas, Misiones\",\"centro de estetica en Comodoro Rivadavia, Chubut\",\"centro de estetica en Santiago del Estero, Santiago del Estero\",\"centro de estetica en Formosa, Formosa\",\"centro de estetica en Rio Gallegos, Santa Cruz\"]",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "21180430-2493-43ec-8637-bc49a623a3e3",
+      "name": "Config1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "queries",
+        "options": {}
+      },
+      "id": "65a34f14-2567-4220-9b0e-0dc3383d48f4",
+      "name": "Split Queries1",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://places.googleapis.com/v1/places:searchText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Goog-Api-Key",
+              "value": "={{ $('Config1').first().json.googleApiKey }}"
+            },
+            {
+              "name": "X-Goog-FieldMask",
+              "value": "places.displayName,places.rating,places.userRatingCount,places.websiteUri,places.formattedAddress,places.nationalPhoneNumber,places.googleMapsUri"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "textQuery",
+              "value": "={{ $json.queries }}"
+            },
+            {
+              "name": "minRating",
+              "value": "={{ $('Config1').first().json.minRating }}"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "id": "f5ad7f1c-9dac-4d9f-a6b3-7e83ab7896bd",
+      "name": "Places API1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "places",
+        "options": {}
+      },
+      "id": "e86bc073-ba66-410f-a3be-9f051e04776f",
+      "name": "Split Places1",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1984,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "62ae8681-f355-451e-a108-018cba48308a",
+              "name": "query",
+              "value": "={{ $('Split Queries1').item.json.queries }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2144,
+        448
+      ],
+      "id": "b9626e8a-695c-41b9-aba4-87f0c4a64cb4",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// FILTROS DE CALIDAD + DEDUPLICACION\n// ============================================================\nconst minReviews = $('Config1').first().json.minReviews;\n\nconst socialDomains = [\n  'facebook.com', 'fb.com',\n  'instagram.com',\n  'twitter.com', 'x.com',\n  'linktr.ee',\n  'wa.me', 'whatsapp.com',\n  'youtube.com',\n  'tiktok.com'\n];\n\nconst seen = new Set();\nconst results = [];\n\nfor (const item of items) {\n  const p = item.json;\n  const query = p.query || '';\n  const categoria = query.split(' en ')[0].trim() || 'sin categoría';\n\n  // -- Filtro 1: Minimo de reseñas --\n  const reviewCount = p.userRatingCount || 0;\n  if (reviewCount < minReviews) continue;\n\n  // -- Filtro 2: Sin web real --\n  const website = (p.websiteUri || '').trim();\n  const hasRealWebsite = website !== '' && !socialDomains.some(d => website.toLowerCase().includes(d));\n  if (hasRealWebsite) continue;\n  // -- Filtro 3: Sin teléfono = incontactable --\n  const telefono = (p.nationalPhoneNumber || '').trim();\n  if (!telefono) continue;\n  // -- Deduplicacion por googleMapsUri --\n  const mapsUrl = p.googleMapsUri || '';\n  if (mapsUrl && seen.has(mapsUrl)) continue;\n  if (mapsUrl) seen.add(mapsUrl);\n\n  results.push({\n    json: {\n      categoria:    categoria,\n      nombre:       p.displayName?.text || '',\n      rating:       p.rating || 0,\n      reseñas:      reviewCount,\n      telefono:     telefono,\n      direccion:    p.formattedAddress || '',\n      web_actual:   website || '(sin web)',\n      google_maps:  mapsUrl,\n      fecha_scrape: new Date().toLocaleDateString('es-AR')\n    }\n  });\n}\n\n// -- Ordenar por score de calidad (rating x log de reseñas) --\nresults.sort((a, b) => {\n  const scoreA = a.json.rating * Math.log(a.json.reseñas + 1);\n  const scoreB = b.json.rating * Math.log(b.json.reseñas + 1);\n  return scoreB - scoreA;\n});\n\n// -- Top 20 por categoria --\nconst topPorCategoria = {};\nfor (const r of results) {\n  const cat = r.json.categoria;\n  if (!topPorCategoria[cat]) topPorCategoria[cat] = [];\n  if (topPorCategoria[cat].length < 20) topPorCategoria[cat].push(r);\n}\n\nreturn Object.values(topPorCategoria).flat();"
+      },
+      "id": "99391a1f-1aaf-4582-b175-9981fde02a37",
+      "name": "Filtrar y Formatear1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1X7Iu2y6TCvcTDYG_VBoE_l0Lz4Ht_IXRE1_J2vcZc9U",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "categoria": "={{ $json.categoria }}",
+            "nombre": "={{ $json.nombre }}",
+            "rating": "={{ $json.rating }}",
+            "reseñas": "={{ $json.reseñas }}",
+            "telefono": "={{ $json.telefono }}",
+            "direccion": "={{ $json.direccion }}",
+            "web_actual": "={{ $json.web_actual }}",
+            "google_maps": "={{ $json.google_maps }}",
+            "fecha_scrape": "={{ $json.fecha_scrape }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "categoria",
+              "displayName": "categoria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nombre",
+              "displayName": "nombre",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "reseñas",
+              "displayName": "reseñas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "telefono",
+              "displayName": "telefono",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "direccion",
+              "displayName": "direccion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "web_actual",
+              "displayName": "web_actual",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "google_maps",
+              "displayName": "google_maps",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "fecha_scrape",
+              "displayName": "fecha_scrape",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "92a18a6a-46da-45dc-9be0-35350c02cedd",
+      "name": "Google Sheets1",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2512,
+        448
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "1HB5eiZ1OF5fqxD3",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Split Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Queries": {
+      "main": [
+        [
+          {
+            "node": "Places API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Places API": {
+      "main": [
+        [
+          {
+            "node": "Split Places",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Places": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar y Formatear": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Filtrar y Formatear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config1": {
+      "main": [
+        [
+          {
+            "node": "Split Queries1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Queries1": {
+      "main": [
+        [
+          {
+            "node": "Places API1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Places API1": {
+      "main": [
+        [
+          {
+            "node": "Split Places1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Places1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Filtrar y Formatear1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar y Formatear1": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "05a21e2d-eba6-4f8b-a4cf-d67c96b0830a",
+  "meta": {
+    "instanceId": "de93561aa00d4abf59a2e2da1dbabc32364393e73a83d428e936280faa1b14e2"
+  },
+  "id": "jzh5fbwz4c0569sL",
+  "tags": []
+}
